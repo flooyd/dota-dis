@@ -47,7 +47,7 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
 
     try {
         // Corrected OpenDota URL and variable interpolation
-        const response = await axios.get(`https://opendota.com{accountId}/recentMatches`);
+        const response = await axios.get(`https://opendota.com/${accountId}/recentMatches`);
         const latestMatch = response.data[0];
 
         if (!latestMatch) {
