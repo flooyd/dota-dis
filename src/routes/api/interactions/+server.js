@@ -2,15 +2,26 @@ import { json } from '@sveltejs/kit';
 import { InteractionType, InteractionResponseType, verifyKey } from 'discord-interactions';
 import { DISCORD_PUBLIC_KEY } from '\$env/static/private';
 import axios from 'axios';
+import { Buffer } from 'node:buffer'; // FIX: Ensure Buffer is available to prevent verifyKey from crashing
 
-// Add { platform } to access Vercel's lifecycle hooks
 export async function POST({ request, platform }) {
     // 1. Verify the request is actually coming from Discord
     const signature = request.headers.get('x-signature-ed25519');
     const timestamp = request.headers.get('x-signature-timestamp');
     const rawBody = await request.text();
 
-    const isValidRequest = verifyKey(rawBody, signature, timestamp, DISCORD_PUBLIC_KEY);
+    // Ensure we don't crash if headers are missing
+    if (!signature || !timestamp || !DISCORD_PUBLIC_KEY) {
+        return new Response('Missing signature headers or configuration', { status: 401 });
+    }
+
+    const isValidRequest = verifyKey(
+        Buffer.from(rawBody), 
+        signature, 
+        timestamp, 
+        DISCORD_PUBLIC_KEY
+    );
+    
     if (!isValidRequest) {
         return new Response('Invalid request signature', { status: 401 });
     }
@@ -24,23 +35,32 @@ export async function POST({ request, platform }) {
 
     // 3. Handle Slash Commands
     if (interaction.type === InteractionType.APPLICATION_COMMAND) {
-        // FIXED: name and options are in data. token and application_id are on root.
-        const { name, options } = interaction.data; 
-        const { token, application_id } = interaction; 
+        // FIX: Safely parse via optional chaining because data elements are not guaranteed
+        const name = interaction.data?.name;
+        const options = interaction.data?.options;
+        const token = interaction.token;
+        const application_id = interaction.application_id;
 
         if (name === 'match') {
-            const accountId = options[0].value;
+            // Find the accountId element option safely
+            const accountIdOption = options?.find(opt => opt.name === 'account_id' || opt.type === 3 || opt.type === 4);
+            const accountId = accountIdOption ? accountIdOption.value : options?.[0]?.value;
 
-            // FIXED: Prevent Vercel from freezing/killing the background task.
-            // This holds the lambda function open until the promise resolves.
+            if (!accountId) {
+                return json({
+                    type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+                    data: { content: 'Please provide a valid account ID.' }
+                });
+            }
+
+            // Tell Vercel to keep the lambda alive until the background fetch finishes
             if (platform && typeof platform.waitUntil === 'function') {
                 platform.waitUntil(fetchAndSendMatchData(accountId, token, application_id));
             } else {
-                // Fallback for local development environment if platform is undefined
                 fetchAndSendMatchData(accountId, token, application_id);
             }
 
-            // Acknowledge within 3 seconds so Discord doesn't timeout
+            // Acknowledge within the 3-second window
             return json({
                 type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
             });
@@ -50,14 +70,14 @@ export async function POST({ request, platform }) {
     return json({ error: 'Unknown interaction' }, { status: 400 });
 }
 
-// Separate helper function to handle the API work and follow up with Discord
+// Helper function to process data and patch the message via webhook channel
 async function fetchAndSendMatchData(accountId, token, applicationId) {
-    const followUpUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
+    const followUpUrl = `https://discord.com{applicationId}/${token}`;
 
     try {
-        // FIXED: Using correct OpenDota API endpoint structure
         const response = await axios.get(`https://opendota.com{accountId}/recentMatches`);
-        const latestMatch = response.data[0];
+        const recentMatches = response.data;
+        const latestMatch = Array.isArray(recentMatches) ? recentMatches[0] : null;
 
         if (!latestMatch) {
             await axios.post(followUpUrl, {
@@ -66,12 +86,10 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
             return;
         }
 
-        // Determine match result
         const isRadiant = latestMatch.player_slot < 128;
         const isWin = (isRadiant && latestMatch.radiant_win) || (!isRadiant && !latestMatch.radiant_win);
         const resultText = isWin ? "🏆 Won" : "❌ Lost";
 
-        // Update the deferred message via Discord Webhook callback
         await axios.post(followUpUrl, {
             embeds: [{
                 title: `Latest Match Result - Match ${latestMatch.match_id}`,
@@ -91,7 +109,7 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
                 content: 'Failed to fetch match data from OpenDota.'
             });
         } catch (webhookError) {
-            console.error("Failed to send webhook error:", webhookError.response?.data || webhookError.message);
+            console.error("Failed to send webhook error fallback:", webhookError.response?.data || webhookError.message);
         }
     }
 }
