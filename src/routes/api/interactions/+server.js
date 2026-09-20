@@ -43,7 +43,7 @@ export async function POST({ request }) {
 
 // Separate helper function to handle the API work and follow up with Discord
 async function fetchAndSendMatchData(accountId, token, applicationId) {
-    const followUpUrl = `https://discord.com{applicationId}/${token}`;
+    const followUpUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
 
     try {
         // Corrected OpenDota URL and variable interpolation
