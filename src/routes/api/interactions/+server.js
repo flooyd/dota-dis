@@ -73,3 +73,7 @@ export async function POST({ request }) {
 
     return json({ error: 'Unknown interaction' }, { status: 400 });
 }
+
+export function GET() {
+    return json({ message: 'This endpoint is for Discord interactions. Please use POST requests.' }, { status: 200 });
+}
