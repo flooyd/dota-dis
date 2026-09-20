@@ -23,7 +23,7 @@ export async function POST({ request }) {
 
     // 3. Handle Slash Commands
     if (interaction.type === InteractionType.APPLICATION_COMMAND) {
-        const { name, options, token } = interaction; // Destructure the interaction token
+        const { name, options, token } = interaction.data; // Destructure the interaction token
 
         if (name === 'match') {
             const accountId = options[0].value;
