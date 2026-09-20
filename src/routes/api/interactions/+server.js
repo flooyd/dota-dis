@@ -15,7 +15,7 @@ export async function POST({ request, platform }) {
 	}
 
 	// 2. Perform raw payload verification
-	const isValidRequest = verifyKey(Buffer.from(rawBody), signature, timestamp, DISCORD_PUBLIC_KEY);
+	const isValidRequest = await verifyKey(Buffer.from(rawBody), signature, timestamp, DISCORD_PUBLIC_KEY);
 
 	console.log({
 		hasSignature: !!signature,
