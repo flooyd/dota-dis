@@ -3,7 +3,8 @@ import { InteractionType, InteractionResponseType, verifyKey } from 'discord-int
 import { DISCORD_PUBLIC_KEY } from '\$env/static/private';
 import axios from 'axios';
 
-export async function POST({ request }) {
+// Add { platform } to access Vercel's lifecycle hooks
+export async function POST({ request, platform }) {
     // 1. Verify the request is actually coming from Discord
     const signature = request.headers.get('x-signature-ed25519');
     const timestamp = request.headers.get('x-signature-timestamp');
@@ -23,15 +24,23 @@ export async function POST({ request }) {
 
     // 3. Handle Slash Commands
     if (interaction.type === InteractionType.APPLICATION_COMMAND) {
-        const { name, options, token } = interaction.data; // Destructure the interaction token
+        // FIXED: name and options are in data. token and application_id are on root.
+        const { name, options } = interaction.data; 
+        const { token, application_id } = interaction; 
 
         if (name === 'match') {
             const accountId = options[0].value;
 
-            // Bypasses the 3-second limit. Shows "Bot is thinking..." in Discord
-            // Run the API call asynchronously out-of-band
-            fetchAndSendMatchData(accountId, token, interaction.application_id);
+            // FIXED: Prevent Vercel from freezing/killing the background task.
+            // This holds the lambda function open until the promise resolves.
+            if (platform && typeof platform.waitUntil === 'function') {
+                platform.waitUntil(fetchAndSendMatchData(accountId, token, application_id));
+            } else {
+                // Fallback for local development environment if platform is undefined
+                fetchAndSendMatchData(accountId, token, application_id);
+            }
 
+            // Acknowledge within 3 seconds so Discord doesn't timeout
             return json({
                 type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
             });
@@ -46,8 +55,8 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
     const followUpUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
 
     try {
-        // Corrected OpenDota URL and variable interpolation
-        const response = await axios.get(`https://opendota.com/${accountId}/recentMatches`);
+        // FIXED: Using correct OpenDota API endpoint structure
+        const response = await axios.get(`https://opendota.com{accountId}/recentMatches`);
         const latestMatch = response.data[0];
 
         if (!latestMatch) {
@@ -76,9 +85,13 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
         });
 
     } catch (error) {
-        console.error(error);
-        await axios.post(followUpUrl, {
-            content: 'Failed to fetch match data from OpenDota.'
-        });
+        console.error("Background Error:", error.response?.data || error.message);
+        try {
+            await axios.post(followUpUrl, {
+                content: 'Failed to fetch match data from OpenDota.'
+            });
+        } catch (webhookError) {
+            console.error("Failed to send webhook error:", webhookError.response?.data || webhookError.message);
+        }
     }
 }
