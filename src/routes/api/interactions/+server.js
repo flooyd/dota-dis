@@ -3,11 +3,11 @@ import { InteractionType, InteractionResponseType, verifyKey } from 'discord-int
 import { DISCORD_PUBLIC_KEY } from '$env/static/private';
 import axios from 'axios';
 
-export function buildOpenDotaRecentMatchesUrl(accountId) {
+function buildOpenDotaRecentMatchesUrl(accountId) {
 	return `https://api.opendota.com/api/players/${encodeURIComponent(accountId)}/recentMatches`;
 }
 
-export function buildDiscordWebhookUrl(applicationId, token) {
+function buildDiscordWebhookUrl(applicationId, token) {
 	return `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
 }
 
