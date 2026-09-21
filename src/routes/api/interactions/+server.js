@@ -76,10 +76,10 @@ export async function POST({ request, platform }) {
 
 // Separate asynchronous processing function
 async function fetchAndSendMatchData(accountId, token, applicationId) {
-	const followUpUrl = `https://discord.com{applicationId}/${token}`;
+	const followUpUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
 
 	try {
-		const response = await axios.get(`https://opendota.com{accountId}/recentMatches`);
+		const response = await axios.get(`https://opendota.com/${accountId}/recentMatches`);
 		const recentMatches = response.data;
 
 		// Grab item index 0 from recent matches safely
