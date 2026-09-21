@@ -1,11 +1,17 @@
 import { json } from '@sveltejs/kit';
 import { InteractionType, InteractionResponseType, verifyKey } from 'discord-interactions';
-import { DISCORD_PUBLIC_KEY } from '\$env/static/private';
+import { DISCORD_PUBLIC_KEY } from '$env/static/private';
 import axios from 'axios';
-import { Buffer } from 'node:buffer';
+
+export function buildOpenDotaRecentMatchesUrl(accountId) {
+	return `https://api.opendota.com/api/players/${encodeURIComponent(accountId)}/recentMatches`;
+}
+
+export function buildDiscordWebhookUrl(applicationId, token) {
+	return `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
+}
 
 export async function POST({ request, platform }) {
-	// 1. Grab headers explicitly using lowercased naming conventions
 	const signature = request.headers.get('x-signature-ed25519');
 	const timestamp = request.headers.get('x-signature-timestamp');
 	const rawBody = await request.text();
@@ -14,42 +20,28 @@ export async function POST({ request, platform }) {
 		return new Response('Required signature validation metadata missing', { status: 401 });
 	}
 
-	// 2. Perform raw payload verification
-	const isValidRequest = await verifyKey(Buffer.from(rawBody), signature, timestamp, DISCORD_PUBLIC_KEY);
-
-	console.log({
-		hasSignature: !!signature,
-		hasTimestamp: !!timestamp,
-		publicKeySet: !!DISCORD_PUBLIC_KEY
-	});
-
+	const isValidRequest = verifyKey(rawBody, signature, timestamp, DISCORD_PUBLIC_KEY);
 	if (!isValidRequest) {
-		return new Response('Invalid request signature signature verification failed', { status: 401 });
+		return new Response('Invalid request signature verification failed', { status: 401 });
 	}
 
 	const interaction = JSON.parse(rawBody);
 
-	// 3. Handle Discord's validation check upfront cleanly
 	if (interaction.type === InteractionType.PING) {
-		// Return a raw 200 payload containing the standard PONG value (type: 1)
 		return new Response(JSON.stringify({ type: InteractionResponseType.PONG }), {
 			status: 200,
 			headers: { 'Content-Type': 'application/json' }
 		});
 	}
 
-	// 4. Handle Slash Commands
 	if (interaction.type === InteractionType.APPLICATION_COMMAND) {
 		const name = interaction.data?.name;
 		const options = interaction.data?.options;
 		const token = interaction.token;
-		const application_id = interaction.application_id;
+		const applicationId = interaction.application_id;
 
 		if (name === 'match') {
-			const accountIdOption = options?.find(
-				(opt) => opt.name === 'account_id' || opt.type === 3 || opt.type === 4
-			);
-			const accountId = accountIdOption ? accountIdOption.value : options?.[0]?.value;
+			const accountId = options?.[0]?.value;
 
 			if (!accountId) {
 				return json({
@@ -58,11 +50,10 @@ export async function POST({ request, platform }) {
 				});
 			}
 
-			// Keep lambda function tracking process instance running out of band
 			if (platform && typeof platform.waitUntil === 'function') {
-				platform.waitUntil(fetchAndSendMatchData(accountId, token, application_id));
+				platform.waitUntil(fetchAndSendMatchData(accountId, token, applicationId));
 			} else {
-				fetchAndSendMatchData(accountId, token, application_id);
+				fetchAndSendMatchData(accountId, token, applicationId);
 			}
 
 			return json({
@@ -74,22 +65,21 @@ export async function POST({ request, platform }) {
 	return json({ error: 'Unknown interaction command variant' }, { status: 400 });
 }
 
-// Separate asynchronous processing function
 async function fetchAndSendMatchData(accountId, token, applicationId) {
-	const followUpUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
+	const followUpUrl = buildDiscordWebhookUrl(applicationId, token);
 
 	try {
-		const response = await axios.get(`https://opendota.com/${accountId}/recentMatches`);
+		const response = await axios.get(buildOpenDotaRecentMatchesUrl(accountId));
 		const recentMatches = response.data;
-
-		// Grab item index 0 from recent matches safely
 		const latestMatch =
 			Array.isArray(recentMatches) && recentMatches.length > 0 ? recentMatches[0] : null;
 
 		if (!latestMatch) {
-			await axios.post(followUpUrl, {
-				content: `No recent matches found for account ID: ${accountId}`
-			});
+			await axios.post(
+				followUpUrl,
+				{ content: `No recent matches found for account ID: ${accountId}` },
+				{ headers: { 'Content-Type': 'application/json' } }
+			);
 			return;
 		}
 
@@ -98,29 +88,35 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
 			(isRadiant && latestMatch.radiant_win) || (!isRadiant && !latestMatch.radiant_win);
 		const resultText = isWin ? '🏆 Won' : '❌ Lost';
 
-		await axios.post(followUpUrl, {
-			embeds: [
-				{
-					title: `Latest Match Result - Match ${latestMatch.match_id}`,
-					color: isWin ? 0x2ecc71 : 0xe74c3c,
-					fields: [
-						{ name: 'Result', value: resultText, inline: true },
-						{
-							name: 'K/D/A',
-							value: `${latestMatch.kills}/${latestMatch.deaths}/${latestMatch.assists}`,
-							inline: true
-						},
-						{ name: 'Duration', value: `${Math.floor(latestMatch.duration / 60)}m`, inline: true }
-					]
-				}
-			]
-		});
+		await axios.post(
+			followUpUrl,
+			{
+				embeds: [
+					{
+						title: `Latest Match Result - Match ${latestMatch.match_id}`,
+						color: isWin ? 0x2ecc71 : 0xe74c3c,
+						fields: [
+							{ name: 'Result', value: resultText, inline: true },
+							{
+								name: 'K/D/A',
+								value: `${latestMatch.kills}/${latestMatch.deaths}/${latestMatch.assists}`,
+								inline: true
+							},
+							{ name: 'Duration', value: `${Math.floor(latestMatch.duration / 60)}m`, inline: true }
+						]
+					}
+				]
+			},
+			{ headers: { 'Content-Type': 'application/json' } }
+		);
 	} catch (error) {
 		console.error('Background OpenDota processing failure:', error.response?.data || error.message);
 		try {
-			await axios.post(followUpUrl, {
-				content: 'Failed to fetch match data from OpenDota.'
-			});
+			await axios.post(
+				followUpUrl,
+				{ content: 'Failed to fetch match data from OpenDota.' },
+				{ headers: { 'Content-Type': 'application/json' } }
+			);
 		} catch (webhookError) {
 			console.error(
 				'Webhook fallback delivery failed:',
@@ -129,3 +125,4 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
 		}
 	}
 }
+
