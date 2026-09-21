@@ -11,6 +11,19 @@ function buildDiscordWebhookUrl(applicationId, token) {
 	return `https://discord.com/api/v10/webhooks/${applicationId}/${token}`;
 }
 
+function buildHeroAssetUrl(heroName) {
+	const normalized = heroName.replace('npc_dota_hero_', '').toLowerCase();
+	return `https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/${normalized}.png`;
+}
+
+function formatHeroName(heroName) {
+	return heroName
+		.replace('npc_dota_hero_', '')
+		.split('_')
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
+}
+
 export async function POST({ request }) {
 	const signature = request.headers.get('x-signature-ed25519');
 	const timestamp = request.headers.get('x-signature-timestamp');
@@ -54,7 +67,13 @@ export async function POST({ request }) {
 			});
 
 			try {
-				const recentMatches = (await axios.get(buildOpenDotaRecentMatchesUrl(accountId))).data;
+				const [recentMatchesResponse, heroStatsResponse] = await Promise.all([
+					axios.get(buildOpenDotaRecentMatchesUrl(accountId)),
+					axios.get('https://api.opendota.com/api/herostats')
+				]);
+
+				const recentMatches = recentMatchesResponse.data;
+				const heroStats = heroStatsResponse.data;
 				const latestMatch =
 					Array.isArray(recentMatches) && recentMatches.length > 0 ? recentMatches[0] : null;
 
@@ -65,6 +84,11 @@ export async function POST({ request }) {
 					});
 				}
 
+				const hero = heroStats.find((entry) => entry.id === latestMatch.hero_id) ?? null;
+				const heroName = hero ? hero.name : 'Unknown Hero';
+				const heroDisplayName = formatHeroName(heroName);
+				const heroIconUrl = hero ? buildHeroAssetUrl(heroName) : undefined;
+				const opendotaMatchUrl = `https://www.opendota.com/matches/${latestMatch.match_id}`;
 				const isRadiant = latestMatch.player_slot < 128;
 				const isWin =
 					(isRadiant && latestMatch.radiant_win) || (!isRadiant && !latestMatch.radiant_win);
@@ -77,6 +101,8 @@ export async function POST({ request }) {
 							{
 								title: `Latest Match Result - Match ${latestMatch.match_id}`,
 								color: isWin ? 0x2ecc71 : 0xe74c3c,
+								thumbnail: heroIconUrl ? { url: heroIconUrl } : undefined,
+								description: `Hero: ${heroDisplayName}${heroIconUrl ? ' 🏹' : ''}\n[OpenDota Match](${opendotaMatchUrl})`,
 								fields: [
 									{ name: 'Result', value: resultText, inline: true },
 									{
