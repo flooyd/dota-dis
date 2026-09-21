@@ -50,6 +50,13 @@ export async function POST({ request, platform }) {
 				});
 			}
 
+			console.log('Slash command received', {
+				accountId,
+				applicationId,
+				token: token ? 'present' : 'missing',
+				followUpUrl: buildDiscordWebhookUrl(applicationId, token)
+			});
+
 			if (platform && typeof platform.waitUntil === 'function') {
 				platform.waitUntil(fetchAndSendMatchData(accountId, token, applicationId));
 			} else {
@@ -68,18 +75,28 @@ export async function POST({ request, platform }) {
 async function fetchAndSendMatchData(accountId, token, applicationId) {
 	const followUpUrl = buildDiscordWebhookUrl(applicationId, token);
 
+	console.log('Starting match fetch', {
+		accountId,
+		applicationId,
+		followUpUrl,
+		openDotaUrl: buildOpenDotaRecentMatchesUrl(accountId)
+	});
+
 	try {
 		const response = await axios.get(buildOpenDotaRecentMatchesUrl(accountId));
+		console.log('OpenDota response status', response.status);
 		const recentMatches = response.data;
 		const latestMatch =
 			Array.isArray(recentMatches) && recentMatches.length > 0 ? recentMatches[0] : null;
 
 		if (!latestMatch) {
-			await axios.post(
+			console.log('No recent matches found');
+			const noMatchResponse = await axios.post(
 				followUpUrl,
 				{ content: `No recent matches found for account ID: ${accountId}` },
 				{ headers: { 'Content-Type': 'application/json' } }
 			);
+			console.log('No-match webhook status', noMatchResponse.status);
 			return;
 		}
 
@@ -88,7 +105,7 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
 			(isRadiant && latestMatch.radiant_win) || (!isRadiant && !latestMatch.radiant_win);
 		const resultText = isWin ? '🏆 Won' : '❌ Lost';
 
-		await axios.post(
+		const webhookResponse = await axios.post(
 			followUpUrl,
 			{
 				embeds: [
@@ -109,14 +126,16 @@ async function fetchAndSendMatchData(accountId, token, applicationId) {
 			},
 			{ headers: { 'Content-Type': 'application/json' } }
 		);
+		console.log('Discord webhook status', webhookResponse.status);
 	} catch (error) {
 		console.error('Background OpenDota processing failure:', error.response?.data || error.message);
 		try {
-			await axios.post(
+			const fallbackResponse = await axios.post(
 				followUpUrl,
 				{ content: 'Failed to fetch match data from OpenDota.' },
 				{ headers: { 'Content-Type': 'application/json' } }
 			);
+			console.log('Fallback webhook status', fallbackResponse.status);
 		} catch (webhookError) {
 			console.error(
 				'Webhook fallback delivery failed:',
