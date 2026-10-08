@@ -24,6 +24,43 @@ function formatHeroName(heroName) {
 		.join(' ');
 }
 
+// IDs from OpenDota's game_mode and lobby_type constants
+const GAME_MODES = {
+	1: 'All Pick',
+	2: "Captains Mode",
+	3: 'Random Draft',
+	4: 'Single Draft',
+	5: 'All Random',
+	8: 'Reverse Captains Mode',
+	11: 'Mid Only',
+	12: 'Least Played',
+	13: 'Limited Heroes',
+	16: "Captains Draft",
+	17: 'Balanced Draft',
+	18: 'Ability Draft',
+	20: 'All Random Death Match',
+	21: '1v1 Mid',
+	22: 'All Draft',
+	23: 'Turbo'
+};
+
+const LOBBY_TYPES = {
+	1: 'Practice',
+	2: 'Tournament',
+	4: 'Co-op Bots',
+	5: 'Ranked',
+	6: 'Ranked',
+	7: 'Ranked',
+	8: '1v1 Mid',
+	9: 'Battle Cup'
+};
+
+function formatGameMode(gameMode, lobbyType) {
+	const mode = GAME_MODES[gameMode] ?? 'Unknown Mode';
+	const lobby = LOBBY_TYPES[lobbyType];
+	return lobby && lobby !== mode ? `${lobby} - ${mode}` : mode;
+}
+
 export async function POST({ request }) {
 	const signature = request.headers.get('x-signature-ed25519');
 	const timestamp = request.headers.get('x-signature-timestamp');
@@ -110,7 +147,12 @@ export async function POST({ request }) {
 										value: `${latestMatch.kills}/${latestMatch.deaths}/${latestMatch.assists}`,
 										inline: true
 									},
-									{ name: 'Duration', value: `${Math.floor(latestMatch.duration / 60)}m`, inline: true }
+									{ name: 'Duration', value: `${Math.floor(latestMatch.duration / 60)}m`, inline: true },
+									{
+										name: 'Game Mode',
+										value: formatGameMode(latestMatch.game_mode, latestMatch.lobby_type),
+										inline: true
+									}
 								]
 							}
 						]
